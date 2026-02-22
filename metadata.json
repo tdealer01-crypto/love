@@ -1,0 +1,5 @@
+{
+  "name": "Love Core Dashboard",
+  "description": "An AI-powered deterministic judge that evaluates actions as TANHA or METTA using Gemini and Google Search Grounding.",
+  "requestFramePermissions": []
+}
