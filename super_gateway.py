@@ -41,35 +41,83 @@ BLOCKED_COMMANDS = ["rm -rf", "shutdown", "reboot", ":(){:|:&};:"]
 SENSITIVE_PATHS = ["/etc/", "/root/", "/var/log/"]
 
 def evaluate_policy(shell_command):
-    action = {"tool": "exec", "arguments": {"command": shell_command}}
+    """
+    Evaluates a shell command against a set of security rules.
+    - Blocks explicitly forbidden command patterns.
+    - Prevents modification of sensitive system directories.
+    - Allows file creation/modification in non-sensitive areas.
+    """
     
-    # Rule 1: Block highly destructive commands
+    # Rule 1: Block highly destructive, hardcoded command patterns
     for blocked in BLOCKED_COMMANDS:
         if blocked in shell_command:
+            logging.warning(f"Policy REJECT (Dangerous Pattern): {shell_command}")
             return "reject", f"Blocked dangerous command pattern: `{blocked}`"
 
-    # Rule 2: Check for file modification attempts (simplified for direct execution)
-    if any(cmd in shell_command.split() for cmd in ['mv', 'cp', 'mkdir', 'touch', 'chmod', 'chown', 'rm']):
-        # Allow rm only for non-sensitive, non-recursive single file deletions
-        if shell_command.strip().startswith('rm ') and '-r' not in shell_command and '/*' not in shell_command:
-             pass # Allow single file deletion
-        else:
-            return "reject", f"Blocked file modification command: `{shell_command}`"
+    # Rule 2: Prevent operations in sensitive directories
+    modifies_fs = any(cmd in shell_command for cmd in ['>', '>>', 'mv', 'cp', 'mkdir', 'touch', 'chmod', 'chown', 'rm'])
+    if modifies_fs:
+        for path in SENSITIVE_PATHS:
+            # Check if the command operates on a sensitive path
+            if re.search(rf'(\s|"){re.escape(path)}', shell_command):
+                 logging.warning(f"Policy REJECT (Sensitive Path): {shell_command}")
+                 return "reject", f"Blocked attempt to modify sensitive path: `{path}`"
 
+    # Rule 3: Specific constraints on `rm`
+    if ' rm ' in f' {shell_command} ' and ('-r' in shell_command or '-f' in shell_command or '/*' in shell_command):
+        logging.warning(f"Policy REJECT (Recursive/Forced RM): {shell_command}")
+        return "reject", "Blocked recursive or forced `rm`. Only single file deletion is allowed."
+
+    # If no rules are broken, approve the command.
+    logging.info(f"Policy APPROVE: {shell_command}")
     return "approve", "Command approved by policy engine."
 
+MEMORY_FILE = "agent_memory.md"
+
+def get_memory_context():
+    """Reads the content of the memory file to provide context to the LLM."""
+    try:
+        with open(MEMORY_FILE, "r", encoding='utf-8') as f:
+            return f.read()
+    except FileNotFoundError:
+        return "Memory file not found. Proceeding with no context."
+    except Exception as e:
+        return f"Error reading memory file: {e}"
+
 def translate_to_shell_with_gemini(natural_command):
-    # ... (This function remains the same as the previous version)
     if not gemini_model:
         return 'echo "Gemini is not available. Please check your API Key."', "LLM Disabled"
-    prompt = f"""\nYou are an expert Linux system administrator. Translate the user's request into a single, concise Linux shell command. Prioritize safety. If the request is ambiguous or dangerous, return 'ERROR'.\n\nUser request: \"{natural_command}\"\nShell command:"""
+    
+    memory_context = get_memory_context()
+
+    prompt = f"""# CONTEXT
+## Main Objective & Memory
+{memory_context}
+
+# TASK
+As a senior Linux system administrator AI, translate the user's request into a single, executable, and safe shell command for a Termux environment.
+
+# RULES
+- **CRITICAL:** Do NOT use `sudo`.
+- The output MUST be a single-line shell command.
+- If the request is unsafe, ambiguous, or cannot be translated, return the single word: 'ERROR'.
+
+# REQUEST
+User: "{natural_command}"
+Command:"""
     try:
         response = gemini_model.generate_content(prompt)
+        # Clean up the response, removing backticks and "Command:" prefixes
         shell_command = response.text.strip().replace('`', '')
-        if not shell_command or 'ERROR' in shell_command:
+        if shell_command.lower().startswith("command:"):
+            shell_command = shell_command[8:].strip()
+
+        if not shell_command or 'ERROR' in shell_command.upper():
+             logging.warning(f"Gemini returned an error or ambiguous command for: '{natural_command}'")
              return f'echo "Error: Gemini deemed the request ambiguous or unsafe."', "LLM Error"
         return shell_command, "LLM Translation"
     except Exception as e:
+        logging.error(f"Gemini API call failed: {e}")
         return f'echo "Error: Could not contact Gemini API. {e}"', "LLM Error"
 
 # ==========================================================
@@ -142,6 +190,6 @@ if __name__ == '__main__':
     telegram_thread = threading.Thread(target=handle_telegram_updates, daemon=True)
     telegram_thread.start()
     print("🚀 Agent is online and ready.")
-    # Keep main thread alive for the background thread
+        # Keep main thread alive for the background thread
     while True:
         time.sleep(60)
