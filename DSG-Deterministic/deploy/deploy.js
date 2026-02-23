@@ -1,7 +1,7 @@
 const hre = require("hardhat");
 
 async function main() {
-  const Token = await hre.ethers.getContractFactory("DSGCreditToken");
+  const Token = await hre.ethers.getContractFactory("SecureWalletAgentToken");
   const token = await Token.deploy();
   await token.waitForDeployment();
 

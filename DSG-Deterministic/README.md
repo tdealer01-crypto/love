@@ -1,8 +1,8 @@
-# DSG Agent Wallet Node (Base Mainnet)
+# Secure-Wallet-Agent (Base Mainnet)
 
 Full Web3 Production Version
 
-Token Supply: 100,000,000 DSG  
+Token Supply: 100,000,000 SWA (Secure Wallet Agent)  
 Stake Lock: 30 Days  
 Network: Base Mainnet  
 
